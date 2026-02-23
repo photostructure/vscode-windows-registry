@@ -58,6 +58,23 @@ describe('Windows Registry Tests', () => {
 				assert.throws(() => ((GetDWORDRegKey as any)('HKEY_LOCAL_MACHINE')));
 				assert.throws(() => ((GetDWORDRegKey as any)('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion')));
 			});
+
+			it('Validates argument length', () => {
+				let reallyLongString = 'areallystring';
+				while (reallyLongString.length < 17000) {
+					reallyLongString += reallyLongString;
+				}
+
+				assert.throws(() => (GetDWORDRegKey(
+					'HKEY_LOCAL_MACHINE',
+					reallyLongString,
+					'InstallDate')));
+
+				assert.throws(() => (GetDWORDRegKey(
+					'HKEY_LOCAL_MACHINE',
+					'SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion',
+					reallyLongString)));
+			});
 		});
 	} else {
 		describe('@GetStringRegKey', () => {
