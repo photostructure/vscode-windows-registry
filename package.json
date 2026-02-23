@@ -29,7 +29,12 @@
     "arm64"
   ],
   "cspell": {
-    "words": ["prebuilds", "prebuildify", "napi", "winregistry"]
+    "words": [
+      "prebuilds",
+      "prebuildify",
+      "napi",
+      "winregistry"
+    ]
   },
   "publishConfig": {
     "access": "public"
