@@ -1,5 +1,8 @@
 # @photostructure/windows-registry
 
+[![npm version](https://img.shields.io/npm/v/@photostructure/windows-registry.svg)](https://www.npmjs.com/package/@photostructure/windows-registry)
+[![Build](https://github.com/photostructure/vscode-windows-registry/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/photostructure/vscode-windows-registry/actions/workflows/build.yml)
+
 > **Fork of [@vscode/windows-registry](https://github.com/microsoft/vscode-windows-registry) with prebuilt binaries.**
 >
 > The upstream package requires a C++ build toolchain at install time. This fork
