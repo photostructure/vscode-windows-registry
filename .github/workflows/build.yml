@@ -110,7 +110,10 @@ jobs:
 
   publish:
     if: ${{ github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-24.04
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     needs:
       - lint
       - test-win-x64
@@ -147,7 +150,7 @@ jobs:
       # npm >= 11.5.1 is required for OIDC trusted publishing
       - run: npm install -g npm@latest
 
-      - run: npm ci --ignore-platform-checks
+      - run: npm ci --ignore-scripts
 
       - run: npm run prepare-release
 
