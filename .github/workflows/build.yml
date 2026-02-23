@@ -158,7 +158,7 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.version }}" = "current" ]; then
             RELEASE_VERSION=$(node -p "require('./package.json').version.replace(/-.*$/, '')")
-            npm version $RELEASE_VERSION --message "release: %s"
+            npm version $RELEASE_VERSION --message "release: %s" --allow-same-version
           else
             npm version ${{ github.event.inputs.version }} --message "release: %s"
           fi
