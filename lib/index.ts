@@ -3,7 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-const windowRegistry = process.platform === 'win32' ? require('../build/Release/winregistry.node') : null;
+// cspell:ignore prebuilds
+import { join } from 'path';
+import nodeGypBuild = require('node-gyp-build');
+
+// Use node-gyp-build to load the prebuilt native binary for the current
+// platform/arch. It checks prebuilds/ first, then falls back to build/Release/.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const windowRegistry: any = process.platform === 'win32'
+	? nodeGypBuild(join(__dirname, '..'))
+	: null;
 
 export type HKEY = "HKEY_CURRENT_USER" | "HKEY_LOCAL_MACHINE" | "HKEY_CLASSES_ROOT" | "HKEY_USERS" | "HKEY_CURRENT_CONFIG";
 

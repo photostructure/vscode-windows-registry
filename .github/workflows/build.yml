@@ -1,0 +1,179 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "@photostructure/windows-registry release: bump version (current = use package.json)"
+        required: false
+        type: choice
+        default: "current"
+        options:
+          - current
+          - patch
+          - minor
+          - major
+
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Release - {0}', github.event.inputs.version) || format('Build - {0}', github.event.head_commit.message || github.event.pull_request.title) }}
+
+jobs:
+  lint:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 20
+          cache: "npm"
+      - run: npm ci --ignore-scripts
+      - run: npx tsc --noEmit
+
+  prebuild-win-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 20
+          cache: "npm"
+      # --ignore-scripts prevents the install script (node-gyp-build) from
+      # running before the prebuild exists
+      - run: npm ci --ignore-scripts
+      - run: npm run build:native
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: prebuilds-win-x64
+          path: prebuilds/
+          retention-days: 1
+
+  prebuild-win-arm64:
+    # windows-11-arm is only available for public repos; switch to
+    # windows-latest with cross-compilation if the repo becomes private.
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 20
+          cache: "npm"
+      - run: npm ci --ignore-scripts
+      - run: npm run build:native
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: prebuilds-win-arm64
+          path: prebuilds/
+          retention-days: 1
+
+  test-win-x64:
+    needs: [prebuild-win-x64]
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: ./prebuilds
+          merge-multiple: true
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+      - run: npm ci
+      - run: npm test
+
+  test-win-arm64:
+    needs: [prebuild-win-arm64]
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: ./prebuilds
+          merge-multiple: true
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+      - run: npm ci
+      - run: npm test
+
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    needs:
+      - lint
+      - test-win-x64
+      - test-win-arm64
+    permissions:
+      contents: write
+      packages: write
+      id-token: write # Required for NPM Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: ./prebuilds
+          merge-multiple: true
+
+      # registry-url is required for OIDC trusted publishing
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: lts/*
+          cache: "npm"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: photostructure/git-ssh-signing-action@fdd4b062a9ba41473f013258cc9c7eea1640f826 # v1.2.0
+        with:
+          ssh-signing-key: ${{ secrets.SSH_SIGNING_KEY }}
+          git-user-name: ${{ secrets.GIT_USER_NAME }}
+          git-user-email: ${{ secrets.GIT_USER_EMAIL }}
+
+      - run: ls -laR ./prebuilds
+
+      # npm >= 11.5.1 is required for OIDC trusted publishing
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      - run: npm run prepare-release
+
+      - name: Version and tag release
+        run: |
+          if [ "${{ github.event.inputs.version }}" = "current" ]; then
+            RELEASE_VERSION=$(node -p "require('./package.json').version.replace(/-.*$/, '')")
+            npm version $RELEASE_VERSION --message "release: %s"
+          else
+            npm version ${{ github.event.inputs.version }} --message "release: %s"
+          fi
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Publish to npm
+        # OIDC provenance generates a signed attestation linking the package to
+        # this workflow — no NPM_TOKEN secret needed.
+        # See: https://docs.npmjs.com/generating-provenance-statements
+        run: npm publish --provenance --access public
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git push origin main --follow-tags
+          gh release create "v$NEW_VERSION" \
+            --title "Release v$NEW_VERSION" \
+            --generate-notes \
+            --verify-tag
