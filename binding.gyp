@@ -7,9 +7,6 @@
           "sources": [
             "src/winregistry.cc"
           ],
-          "msvs_configuration_attributes": {
-            "SpectreMitigation": "Spectre"
-          },
           "conditions": [
             ["target_arch=='x64'", {
               "defines": [
@@ -18,11 +15,11 @@
               ],
               "msvs_settings": {
                 "VCCLCompilerTool": {
+                  "WarningLevel": 4,
                   "AdditionalOptions": [
                     "/Qspectre",
                     "/guard:cf",
                     "/sdl",
-                    "/W3",
                     "/we4146",
                     "/we4244",
                     "/we4267",
@@ -45,10 +42,10 @@
               ],
               "msvs_settings": {
                 "VCCLCompilerTool": {
+                  "WarningLevel": 4,
                   "AdditionalOptions": [
                     "/guard:cf",
                     "/sdl",
-                    "/W3",
                     "/we4146",
                     "/we4244",
                     "/we4267",
