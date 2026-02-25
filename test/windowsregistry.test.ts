@@ -41,6 +41,11 @@ describe('Windows Registry Tests', () => {
 					'SOFTWARE\\Microsoft\\Windows\\CurrentVersion',
 					reallyLongString)));
 			});
+
+			it('Returns undefined for non-existent value', () => {
+				const result = GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'NonExistentStringValue12345');
+				assert(result === undefined);
+			});
 		});
 		describe('@GetDWORDRegKey', () => {
 			it('Retrieves a DWORD registry value', () => {
@@ -64,6 +69,11 @@ describe('Windows Registry Tests', () => {
 				while (reallyLongString.length < 17000) {
 					reallyLongString += reallyLongString;
 				}
+
+				assert.throws(() => ((GetDWORDRegKey as any)(
+					reallyLongString,
+					'SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion',
+					'InstallDate')));
 
 				assert.throws(() => (GetDWORDRegKey(
 					'HKEY_LOCAL_MACHINE',
