@@ -36,16 +36,11 @@ function findValidNativeModule(dir: string): boolean {
   return false;
 }
 
-// Check for existing builds
+// Check for existing prebuildify output
 if (findValidNativeModule("prebuilds")) {
   console.log(
     "Native module already built (found .node file > 2kB), skipping rebuild",
   );
-  process.exit(0);
-}
-
-if (findValidNativeModule("build/Release")) {
-  console.log("Native module already built in build/Release, skipping rebuild");
   process.exit(0);
 }
 

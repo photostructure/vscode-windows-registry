@@ -28,6 +28,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
+    "install": "node-gyp-build",
     "compile": "tsc -p ./",
     "prepare-release": "tsc -p ./",
     "build:native": "tsx scripts/build-native.ts",
