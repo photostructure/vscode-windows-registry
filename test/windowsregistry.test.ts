@@ -78,14 +78,16 @@ describe('Windows Registry Tests', () => {
 		});
 	} else {
 		describe('@GetStringRegKey', () => {
-			it('Throws an error when not on Windows', () => {
-				assert.throws(() => GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'ProgramFilesPath'));
+			it('Returns undefined when not on Windows', () => {
+				const result = GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'ProgramFilesPath');
+				assert.strictEqual(result, undefined);
 			});
 		});
 
 		describe('@GetDWORDRegKey', () => {
-			it('Throws an error when not on Windows', () => {
-				assert.throws(() => GetDWORDRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'SomeValue'));
+			it('Returns undefined when not on Windows', () => {
+				const result = GetDWORDRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'SomeValue');
+				assert.strictEqual(result, undefined);
 			});
 		});
 	}

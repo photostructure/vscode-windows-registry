@@ -11,6 +11,13 @@
 
 Native node module to access the Windows Registry.
 
+## Cross-platform support
+
+This package installs cleanly on all platforms and architectures — no need for
+`optionalDependencies`. On non-Windows platforms, all functions return
+`undefined` (the same as when a registry key doesn't exist on Windows), so
+calling code doesn't need platform checks.
+
 ## Installing
 
 ```sh

@@ -3,8 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// cspell:ignore prebuilds
-import { join } from 'path';
+import { join } from 'node:path';
 import nodeGypBuild = require('node-gyp-build');
 
 // Use node-gyp-build to load the prebuilt native binary for the current
@@ -17,17 +16,9 @@ const windowRegistry: any = process.platform === 'win32'
 export type HKEY = "HKEY_CURRENT_USER" | "HKEY_LOCAL_MACHINE" | "HKEY_CLASSES_ROOT" | "HKEY_USERS" | "HKEY_CURRENT_CONFIG";
 
 export function GetStringRegKey(hive: HKEY, path: string, name: string): string | undefined {
-	if (windowRegistry) {
-		return windowRegistry.GetStringRegKey(hive, path, name);
-	}
-
-	throw new Error('GetStringRegKey is only available on Windows.');
+	return windowRegistry?.GetStringRegKey(hive, path, name);
 }
 
 export function GetDWORDRegKey(hive: HKEY, path: string, name: string): number | undefined {
-	if (windowRegistry) {
-		return windowRegistry.GetDWORDRegKey(hive, path, name);
-	}
-
-	throw new Error('GetDWORDRegKey is only available on Windows.');
+	return windowRegistry?.GetDWORDRegKey(hive, path, name);
 }

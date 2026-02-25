@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm ci --ignore-scripts)",
+      "Bash(git -C /home/mrm/src/vscode-windows-registry status prebuilds/)"
+    ]
+  }
+}

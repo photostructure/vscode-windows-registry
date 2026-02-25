@@ -21,21 +21,6 @@
     "src/",
     "SECURITY.md"
   ],
-  "os": [
-    "win32"
-  ],
-  "cpu": [
-    "x64",
-    "arm64"
-  ],
-  "cspell": {
-    "words": [
-      "prebuilds",
-      "prebuildify",
-      "napi",
-      "winregistry"
-    ]
-  },
   "publishConfig": {
     "access": "public"
   },
@@ -43,7 +28,6 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "install": "node-gyp-build",
     "compile": "tsc -p ./",
     "prepare-release": "tsc -p ./",
     "build:native": "tsx scripts/build-native.ts",
