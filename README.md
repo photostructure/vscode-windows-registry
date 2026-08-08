@@ -33,14 +33,15 @@ console.log(GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\
 
 ## Development
 
+Dependency resolution requires npm 11.10 or later.
+
 ```sh
-npm install
+npm ci                 # install the committed dependency versions
 npm run build:native  # builds the prebuilt binary
-npm test # builds if necessary, then runs tests
+npm test              # builds if necessary, then runs tests
 ```
 
 ## License
 [MIT](https://github.com/photostructure/vscode-windows-registry/blob/main/License.txt)
 
 Upstream copyright Microsoft Corporation.
-

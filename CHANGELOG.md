@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Hardened releases with signed tag-bound builds, exact native-package
+  verification, npm staged publishing, and maintainer 2FA approval.
+- Added 14-day dependency and GitHub Action cooldown policies.
+
 ## [1.1.0] - 2026-02-25
 
 ### Fixed

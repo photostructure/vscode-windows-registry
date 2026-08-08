@@ -1,0 +1,518 @@
+name: Stage npm Release
+run-name: Stage ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate signed release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      package_name: ${{ steps.identity.outputs.package_name }}
+      package_version: ${{ steps.identity.outputs.package_version }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag, package identity, and signatures
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::This workflow must run at a vMAJOR.MINOR.PATCH tag, not $GITHUB_REF"
+            exit 1
+          fi
+
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$PACKAGE_NAME" != "@photostructure/windows-registry" ]]; then
+            echo "::error::Unexpected package name: $PACKAGE_NAME"
+            exit 1
+          fi
+          if [[ "$REF_NAME" != "v$PACKAGE_VERSION" ]]; then
+            echo "::error::Tag $REF_NAME does not match package version $PACKAGE_VERSION"
+            exit 1
+          fi
+
+          REF_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REF_NAME")"
+          TAG_OBJECT_TYPE="$(jq -r '.object.type' <<< "$REF_JSON")"
+          TAG_OBJECT_SHA="$(jq -r '.object.sha' <<< "$REF_JSON")"
+          if [[ "$TAG_OBJECT_TYPE" != tag ]]; then
+            echo "::error::$REF_NAME must be an annotated tag"
+            exit 1
+          fi
+
+          TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA")"
+          TAG_TARGET_TYPE="$(jq -r '.object.type' <<< "$TAG_JSON")"
+          TAG_TARGET_SHA="$(jq -r '.object.sha' <<< "$TAG_JSON")"
+          TAG_VERIFIED="$(jq -r '.verification.verified' <<< "$TAG_JSON")"
+          COMMIT_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" \
+              --jq '.commit.verification.verified'
+          )"
+
+          if [[ "$TAG_TARGET_TYPE" != commit || "$TAG_TARGET_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::error::Tag $REF_NAME does not point directly to the workflow commit"
+            exit 1
+          fi
+          if [[ "$TAG_VERIFIED" != true || "$COMMIT_VERIFIED" != true ]]; then
+            echo "::error::The release commit and annotated tag must both have verified signatures"
+            exit 1
+          fi
+
+          echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "package_version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+
+  prebuild:
+    name: Build win32-${{ matrix.arch }} release prebuild
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the release Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Install build dependencies
+        run: npm ci --ignore-scripts
+      - name: Build the native addon
+        run: npm run build:native
+      - name: Record and verify the native artifact
+        shell: pwsh
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expected = "prebuilds/win32-$env:EXPECTED_ARCH/@photostructure+windows-registry.glibc.node"
+          $binaries = @(Get-ChildItem -Path prebuilds -Recurse -File -Filter *.node)
+          if ($binaries.Count -ne 1) {
+            throw "Expected exactly one native binary, found $($binaries.Count)"
+          }
+
+          $relative = (Resolve-Path -LiteralPath $binaries[0].FullName -Relative)
+          if ($relative.StartsWith(".\")) {
+            $relative = $relative.Substring(2)
+          }
+          $relative = $relative.Replace('\', '/')
+          if ($relative -cne $expected) {
+            throw "Unexpected native binary: $relative (expected $expected)"
+          }
+
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $relative).Hash.ToLowerInvariant()
+          $manifest = [ordered]@{
+            platform = "win32"
+            architecture = $env:EXPECTED_ARCH
+            abi = "napi"
+            filename = $relative
+            sha256 = $hash
+          }
+          $manifest | ConvertTo-Json | Set-Content -NoNewline "prebuilds/MANIFEST-$env:EXPECTED_ARCH.json"
+      - name: Verify the tagged source stayed unchanged
+        run: git diff --exit-code
+      - name: Upload the verified prebuild
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-prebuild-${{ matrix.arch }}
+          path: prebuilds/
+          if-no-files-found: error
+          retention-days: 1
+
+  pack:
+    name: Build exact npm tarball
+    runs-on: ubuntu-24.04
+    needs: [validate, prebuild]
+    env:
+      EXPECTED_PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+      EXPECTED_PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the release Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Install build dependencies
+        run: npm ci --ignore-scripts
+      - name: Download the x64 prebuild
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-prebuild-x64
+          path: native-artifacts/x64
+      - name: Download the ARM64 prebuild
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-prebuild-arm64
+          path: native-artifacts/arm64
+      - name: Verify and assemble the prebuilds
+        run: |
+          set -euo pipefail
+
+          for ARCH in x64 arm64; do
+            ROOT="native-artifacts/$ARCH"
+            MANIFEST="$ROOT/MANIFEST-$ARCH.json"
+            if [[ "$(find "$ROOT" -type f | wc -l)" -ne 2 || ! -f "$MANIFEST" ]]; then
+              echo "::error::Unexpected $ARCH prebuild artifact contents"
+              find "$ROOT" -type f -print
+              exit 1
+            fi
+
+            PLATFORM="$(jq -r '.platform' "$MANIFEST")"
+            MANIFEST_ARCH="$(jq -r '.architecture' "$MANIFEST")"
+            ABI="$(jq -r '.abi' "$MANIFEST")"
+            FILENAME="$(jq -r '.filename' "$MANIFEST")"
+            EXPECTED_FILENAME="prebuilds/win32-$ARCH/@photostructure+windows-registry.glibc.node"
+            if [[ "$PLATFORM" != win32 || "$MANIFEST_ARCH" != "$ARCH" ||
+                  "$ABI" != napi || "$FILENAME" != "$EXPECTED_FILENAME" ]]; then
+              echo "::error::Invalid $ARCH prebuild manifest"
+              cat "$MANIFEST"
+              exit 1
+            fi
+
+            SOURCE="$ROOT/${FILENAME#prebuilds/}"
+            if [[ ! -f "$SOURCE" ]]; then
+              echo "::error::Manifest binary is missing: $SOURCE"
+              exit 1
+            fi
+            EXPECTED_HASH="$(jq -r '.sha256' "$MANIFEST")"
+            ACTUAL_HASH="$(sha256sum "$SOURCE" | awk '{print $1}')"
+            if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
+              echo "::error::$ARCH prebuild checksum mismatch"
+              exit 1
+            fi
+
+            mkdir -p "$(dirname "$FILENAME")"
+            cp "$SOURCE" "$FILENAME"
+          done
+
+          if [[ "$(find prebuilds -type f | wc -l)" -ne 2 ]]; then
+            echo "::error::Expected exactly two assembled prebuilds"
+            find prebuilds -type f -print
+            exit 1
+          fi
+      - name: Compile the package
+        run: npm run compile
+      - name: Verify the tagged source stayed unchanged
+        run: git diff --exit-code
+      - name: Pack and verify the package
+        run: |
+          set -euo pipefail
+
+          mkdir package-artifact
+          npm pack --json --ignore-scripts \
+            --pack-destination package-artifact > package-artifact/PACK.json
+
+          mapfile -t TARBALLS < <(
+            find package-artifact -maxdepth 1 -type f -name '*.tgz'
+          )
+          if [[ "${#TARBALLS[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one package tarball, found ${#TARBALLS[@]}"
+            exit 1
+          fi
+          TARBALL="${TARBALLS[0]}"
+
+          if [[ "$(jq 'length' package-artifact/PACK.json)" -ne 1 ]]; then
+            echo "::error::npm pack did not report exactly one package"
+            exit 1
+          fi
+          PACK_NAME="$(jq -r '.[0].name' package-artifact/PACK.json)"
+          PACK_VERSION="$(jq -r '.[0].version' package-artifact/PACK.json)"
+          PACK_FILENAME="$(jq -r '.[0].filename' package-artifact/PACK.json)"
+          if [[ "$PACK_NAME" != "$EXPECTED_PACKAGE_NAME" ||
+                "$PACK_VERSION" != "$EXPECTED_PACKAGE_VERSION" ||
+                "$PACK_FILENAME" != "$(basename "$TARBALL")" ]]; then
+            echo "::error::npm pack reported an unexpected package identity"
+            exit 1
+          fi
+
+          EMBEDDED_PACKAGE_JSON="$(tar -xOf "$TARBALL" package/package.json)"
+          EMBEDDED_NAME="$(jq -r '.name' <<< "$EMBEDDED_PACKAGE_JSON")"
+          EMBEDDED_VERSION="$(jq -r '.version' <<< "$EMBEDDED_PACKAGE_JSON")"
+          if [[ "$EMBEDDED_NAME" != "$EXPECTED_PACKAGE_NAME" ||
+                "$EMBEDDED_VERSION" != "$EXPECTED_PACKAGE_VERSION" ]]; then
+            echo "::error::The tarball contains an unexpected package identity"
+            exit 1
+          fi
+
+          cat > package-artifact/EXPECTED.txt <<'EOF'
+          License.txt
+          README.md
+          SECURITY.md
+          binding.gyp
+          dist/index.d.ts
+          dist/index.js
+          dist/index.js.map
+          package.json
+          prebuilds/win32-arm64/@photostructure+windows-registry.glibc.node
+          prebuilds/win32-x64/@photostructure+windows-registry.glibc.node
+          src/winregistry.cc
+          EOF
+          LC_ALL=C sort -o package-artifact/EXPECTED.txt package-artifact/EXPECTED.txt
+          jq -r '.[0].files[].path' package-artifact/PACK.json |
+            LC_ALL=C sort > package-artifact/ACTUAL.txt
+          if ! diff -u package-artifact/EXPECTED.txt package-artifact/ACTUAL.txt; then
+            echo "::error::The npm package boundary changed"
+            exit 1
+          fi
+          rm package-artifact/EXPECTED.txt package-artifact/ACTUAL.txt
+
+          tar -tzf "$TARBALL" | LC_ALL=C sort > package-artifact/CONTENTS.txt
+          (
+            cd package-artifact
+            sha256sum -- *.tgz > SHA256SUMS
+          )
+      - name: Upload the exact package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: |
+            package-artifact/*.tgz
+            package-artifact/PACK.json
+            package-artifact/CONTENTS.txt
+            package-artifact/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  test-package:
+    name: Install exact tarball on win32-${{ matrix.arch }}
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Download the exact package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: package-artifact
+      - name: Install the release Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Verify and install the package
+        shell: pwsh
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+          npm_config_min_release_age: "14"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tarballs = @(Get-ChildItem -Path package-artifact -File -Filter *.tgz)
+          if ($tarballs.Count -ne 1) {
+            throw "Expected exactly one package tarball, found $($tarballs.Count)"
+          }
+          $tarball = $tarballs[0]
+
+          $checksum = (Get-Content package-artifact/SHA256SUMS -Raw).Trim() -split '\s+'
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tarball.FullName).Hash.ToLowerInvariant()
+          if ($checksum[0] -cne $actualHash) {
+            throw "Package checksum mismatch"
+          }
+
+          $testDirectory = Join-Path $env:RUNNER_TEMP "windows-registry-package-test"
+          New-Item -ItemType Directory -Path $testDirectory | Out-Null
+          Push-Location $testDirectory
+          try {
+            npm.cmd init --yes | Out-Null
+            npm.cmd install --ignore-scripts=false --no-audit --no-fund $tarball.FullName
+            node -e "const registry = require('@photostructure/windows-registry'); if (process.arch !== process.env.EXPECTED_ARCH) throw new Error('unexpected architecture: ' + process.arch); const value = registry.GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'ProgramFilesPath'); if (typeof value !== 'string') throw new Error('native registry lookup failed')"
+          } finally {
+            Pop-Location
+          }
+
+  stage:
+    name: Stage package on npm
+    runs-on: ubuntu-24.04
+    needs: [validate, pack, test-package]
+    permissions:
+      contents: read
+      id-token: write # Exchange GitHub OIDC identity for npm staging access.
+    env:
+      EXPECTED_PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+      EXPECTED_PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
+    steps:
+      - name: Download the exact package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.ref_name }}
+          path: package-artifact
+      - name: Install the release Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Node 24.19.0 bundles npm 11.17.0; staged publishing requires npm 11.15.0 or later.
+          node-version: 24.19.0
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+      - name: Verify staged-publishing npm support
+        run: |
+          set -euo pipefail
+
+          NPM_VERSION="$(npm --version)"
+          if ! node -e '
+            const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(process.argv[1]);
+            const supported = match &&
+              (Number(match[1]) > 11 ||
+                (Number(match[1]) === 11 && Number(match[2]) >= 15));
+            process.exit(supported ? 0 : 1);
+          ' "$NPM_VERSION"; then
+            echo "::error::npm 11.15.0 or later is required for staged publishing; found $NPM_VERSION"
+            exit 1
+          fi
+      - name: Verify the release tag still matches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::This workflow must run at a release tag"
+            exit 1
+          fi
+
+          REF_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REF_NAME")"
+          TAG_OBJECT_TYPE="$(jq -r '.object.type' <<< "$REF_JSON")"
+          TAG_OBJECT_SHA="$(jq -r '.object.sha' <<< "$REF_JSON")"
+          if [[ "$TAG_OBJECT_TYPE" != tag ]]; then
+            echo "::error::$REF_NAME is no longer an annotated tag"
+            exit 1
+          fi
+
+          TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA")"
+          TAG_TARGET_TYPE="$(jq -r '.object.type' <<< "$TAG_JSON")"
+          TAG_TARGET_SHA="$(jq -r '.object.sha' <<< "$TAG_JSON")"
+          TAG_VERIFIED="$(jq -r '.verification.verified' <<< "$TAG_JSON")"
+          COMMIT_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" \
+              --jq '.commit.verification.verified'
+          )"
+          if [[ "$TAG_TARGET_TYPE" != commit ||
+                "$TAG_TARGET_SHA" != "$GITHUB_SHA" ||
+                "$TAG_VERIFIED" != true ||
+                "$COMMIT_VERIFIED" != true ]]; then
+            echo "::error::Tag $REF_NAME moved or lost a verified signature"
+            exit 1
+          fi
+      - name: Stage the npm package
+        run: |
+          set -euo pipefail
+
+          (
+            cd package-artifact
+            sha256sum --check SHA256SUMS
+          )
+
+          mapfile -t TARBALLS < <(
+            find package-artifact -maxdepth 1 -type f -name '*.tgz'
+          )
+          if [[ "${#TARBALLS[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one package tarball, found ${#TARBALLS[@]}"
+            exit 1
+          fi
+          TARBALL="${TARBALLS[0]}"
+
+          if [[ "$(jq 'length' package-artifact/PACK.json)" -ne 1 ]]; then
+            echo "::error::The artifact has an invalid npm pack report"
+            exit 1
+          fi
+          PACK_NAME="$(jq -r '.[0].name' package-artifact/PACK.json)"
+          PACK_VERSION="$(jq -r '.[0].version' package-artifact/PACK.json)"
+          PACK_FILENAME="$(jq -r '.[0].filename' package-artifact/PACK.json)"
+
+          EMBEDDED_PACKAGE_JSON="$(tar -xOf "$TARBALL" package/package.json)"
+          EMBEDDED_NAME="$(jq -r '.name' <<< "$EMBEDDED_PACKAGE_JSON")"
+          EMBEDDED_VERSION="$(jq -r '.version' <<< "$EMBEDDED_PACKAGE_JSON")"
+          if [[ "$PACK_NAME" != "$EXPECTED_PACKAGE_NAME" ||
+                "$PACK_VERSION" != "$EXPECTED_PACKAGE_VERSION" ||
+                "$PACK_FILENAME" != "$(basename "$TARBALL")" ||
+                "$EMBEDDED_NAME" != "$EXPECTED_PACKAGE_NAME" ||
+                "$EMBEDDED_VERSION" != "$EXPECTED_PACKAGE_VERSION" ]]; then
+            echo "::error::The downloaded artifact has an unexpected package identity"
+            exit 1
+          fi
+
+          npm stage publish "./$TARBALL" --ignore-scripts
+
+  github-release:
+    name: Create immutable GitHub release
+    runs-on: ubuntu-24.04
+    needs: stage
+    permissions:
+      contents: write # Create the immutable GitHub release.
+    steps:
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::This workflow must run at a release tag"
+            exit 1
+          fi
+
+          REF_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REF_NAME")"
+          TAG_OBJECT_TYPE="$(jq -r '.object.type' <<< "$REF_JSON")"
+          TAG_OBJECT_SHA="$(jq -r '.object.sha' <<< "$REF_JSON")"
+          if [[ "$TAG_OBJECT_TYPE" != tag ]]; then
+            echo "::error::$REF_NAME is no longer an annotated tag"
+            exit 1
+          fi
+
+          TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA")"
+          TAG_TARGET_TYPE="$(jq -r '.object.type' <<< "$TAG_JSON")"
+          TAG_TARGET_SHA="$(jq -r '.object.sha' <<< "$TAG_JSON")"
+          TAG_VERIFIED="$(jq -r '.verification.verified' <<< "$TAG_JSON")"
+          COMMIT_VERIFIED="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" \
+              --jq '.commit.verification.verified'
+          )"
+          if [[ "$TAG_TARGET_TYPE" != commit ||
+                "$TAG_TARGET_SHA" != "$GITHUB_SHA" ||
+                "$TAG_VERIFIED" != true ||
+                "$COMMIT_VERIFIED" != true ]]; then
+            echo "::error::Tag $TAG moved or lost a verified signature"
+            exit 1
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes

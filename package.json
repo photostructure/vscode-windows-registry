@@ -27,10 +27,16 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.10.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
     "install": "node-gyp-build",
     "compile": "tsc -p ./",
-    "prepare-release": "tsc -p ./",
     "build:native": "tsx scripts/build-native.ts",
     "test": "npm run build:native && npm run compile && mocha -r ts-node/register test/**/*.test.ts"
   },

@@ -1,4 +1,7 @@
-name: Build & Release
+name: Build & Prepare Release
+
+env:
+  CI: 1
 
 on:
   push:
@@ -8,41 +11,62 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "@photostructure/windows-registry release: bump version (current = use package.json)"
-        required: false
+        description: Version bump
+        required: true
+        default: patch
         type: choice
-        default: "current"
         options:
-          - current
           - patch
           - minor
           - major
 
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('Release - {0}', github.event.inputs.version) || format('Build - {0}', github.event.head_commit.message || github.event.pull_request.title) }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Release - {0}', inputs.version) || format('Build - {0}', github.event.head_commit.message || github.event.pull_request.title) }}
+
+permissions:
+  contents: read
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    name: Lint and type-check
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 20
-          cache: "npm"
-      - run: npm ci --ignore-scripts
-      - run: npx tsc --noEmit
+          persist-credentials: false
+      - name: Install the build Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Type-check
+        run: node node_modules/typescript/bin/tsc --noEmit
+      - name: Verify the tested source stayed unchanged
+        run: git diff --exit-code
 
   prebuild-win-x64:
+    name: Build win32-x64 prebuild
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 20
-          cache: "npm"
-      - run: npm ci --ignore-scripts
-      - run: npm run build:native
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+          persist-credentials: false
+      - name: Install the build Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Build the native addon
+        run: npm run build:native
+      - name: Verify the tested source stayed unchanged
+        run: git diff --exit-code
+      - name: Upload the prebuild
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: prebuilds-win-x64
           path: prebuilds/
@@ -50,18 +74,27 @@ jobs:
           retention-days: 1
 
   prebuild-win-arm64:
-    # windows-11-arm is only available for public repos; switch to
-    # windows-latest with cross-compilation if the repo becomes private.
+    name: Build win32-arm64 prebuild
+    # windows-11-arm is available only for public repositories.
     runs-on: windows-11-arm
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 20
-          cache: "npm"
-      - run: npm ci --ignore-scripts
-      - run: npm run build:native
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+          persist-credentials: false
+      - name: Install the build Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Build the native addon
+        run: npm run build:native
+      - name: Verify the tested source stayed unchanged
+        run: git diff --exit-code
+      - name: Upload the prebuild
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: prebuilds-win-arm64
           path: prebuilds/
@@ -69,129 +102,226 @@ jobs:
           retention-days: 1
 
   test-win-x64:
-    needs: [prebuild-win-x64]
+    name: Test Node.js ${{ matrix.node-version }} on win32-x64
+    needs: prebuild-win-x64
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24, 25]
+        node-version: [20, 22, 24, 26]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: ./prebuilds
-          merge-multiple: true
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+          persist-credentials: false
+      - name: Download the x64 prebuild
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: prebuilds-win-x64
+          path: prebuilds
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node-version }}
-          cache: "npm"
-      - run: npm ci
-      - run: npm test
+          package-manager-cache: false
+      - name: Install the frozen lockfile
+        env:
+          npm_config_force: "true"
+        run: npm ci --ignore-scripts
+      - name: Compile
+        run: node node_modules/typescript/bin/tsc -p ./
+      - name: Test
+        run: node node_modules/mocha/bin/mocha.js -r ts-node/register "test/**/*.test.ts"
+      - name: Verify the tested source stayed unchanged
+        run: git diff --exit-code
 
   test-win-arm64:
-    needs: [prebuild-win-arm64]
+    name: Test Node.js ${{ matrix.node-version }} on win32-arm64
+    needs: prebuild-win-arm64
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24, 25]
+        node-version: [20, 22, 24, 26]
     runs-on: windows-11-arm
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: ./prebuilds
-          merge-multiple: true
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+          persist-credentials: false
+      - name: Download the ARM64 prebuild
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: prebuilds-win-arm64
+          path: prebuilds
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node-version }}
-          cache: "npm"
-      - run: npm ci
-      - run: npm test
+          package-manager-cache: false
+      - name: Install the frozen lockfile
+        env:
+          npm_config_force: "true"
+        run: npm ci --ignore-scripts
+      - name: Compile
+        run: node node_modules/typescript/bin/tsc -p ./
+      - name: Test
+        run: node node_modules/mocha/bin/mocha.js -r ts-node/register "test/**/*.test.ts"
+      - name: Verify the tested source stayed unchanged
+        run: git diff --exit-code
 
   test-cross-platform:
+    name: Test Node.js ${{ matrix.node-version }} on ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node-version: [20, 22, 24, 25]
+        node-version: [20, 22, 24, 26]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node-version }}
-          cache: "npm"
-      - run: npm ci --ignore-scripts
-      - run: npm run compile
-      - run: npx mocha -r ts-node/register test/**/*.test.ts
+          package-manager-cache: false
+      - name: Install the frozen lockfile
+        env:
+          npm_config_force: "true"
+        run: npm ci --ignore-scripts
+      - name: Compile
+        run: node node_modules/typescript/bin/tsc -p ./
+      - name: Test
+        run: node node_modules/mocha/bin/mocha.js -r ts-node/register "test/**/*.test.ts"
+      - name: Verify the tested source stayed unchanged
+        run: git diff --exit-code
 
-  publish:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+  release:
+    name: Create signed release commit and tag
+    runs-on: ubuntu-24.04
     needs:
       - lint
       - test-win-x64
       - test-win-arm64
       - test-cross-platform
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    concurrency:
+      group: ${{ github.repository }}-release
+      cancel-in-progress: false
     permissions:
-      contents: write
-      packages: write
-      id-token: write # Required for NPM Trusted Publishing (OIDC)
+      contents: write # Push the release commit and signed tag.
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout the tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # This isolated job installs no project dependencies and has no npm
+          # authority. It is the only checkout allowed to persist credentials.
+          persist-credentials: true
 
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      - name: Verify the release source
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::Releases must be dispatched from $DEFAULT_BRANCH, not $GITHUB_REF"
+            exit 1
+          fi
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          if [[ "$(git rev-parse "origin/$DEFAULT_BRANCH")" != "$GITHUB_SHA" ]]; then
+            echo "::error::$DEFAULT_BRANCH moved after this release run started; run it again"
+            exit 1
+          fi
+
+      - name: Install the release Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          path: ./prebuilds
-          merge-multiple: true
+          node-version: 24.19.0
+          package-manager-cache: false
 
-      # registry-url is required for OIDC trusted publishing
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
-        with:
-          node-version: lts/*
-          cache: "npm"
-          registry-url: "https://registry.npmjs.org"
-
-      - uses: photostructure/git-ssh-signing-action@fdd4b062a9ba41473f013258cc9c7eea1640f826 # v1.2.0
+      - name: Set up SSH signing
+        uses: photostructure/git-ssh-signing-action@abd2a642ab7d704f66193472b47c72375d85a0c1 # v2.0.1
         with:
           ssh-signing-key: ${{ secrets.SSH_SIGNING_KEY }}
           git-user-name: ${{ secrets.GIT_USER_NAME }}
           git-user-email: ${{ secrets.GIT_USER_EMAIL }}
 
-      - run: ls -laR ./prebuilds
-
-      # npm >= 11.5.1 is required for OIDC trusted publishing
-      - run: npm install -g npm@latest
-
-      - run: npm ci --ignore-scripts
-
-      - run: npm run prepare-release
-
-      - name: Version and tag release
-        run: |
-          if [ "${{ github.event.inputs.version }}" = "current" ]; then
-            RELEASE_VERSION=$(node -p "require('./package.json').version.replace(/-.*$/, '')")
-            npm version $RELEASE_VERSION --message "release: %s" --allow-same-version
-          else
-            npm version ${{ github.event.inputs.version }} --message "release: %s"
-          fi
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-
-      - name: Publish to npm
-        # OIDC provenance generates a signed attestation linking the package to
-        # this workflow — no NPM_TOKEN secret needed.
-        # See: https://docs.npmjs.com/generating-provenance-statements
-        run: npm publish --provenance --access public
-
-      - name: Create GitHub Release
+      - name: Bump the package version
+        id: version
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUMP: ${{ inputs.version }}
         run: |
-          git push origin main --follow-tags
-          gh release create "v$NEW_VERSION" \
-            --title "Release v$NEW_VERSION" \
-            --generate-notes \
-            --verify-tag
+          set -euo pipefail
+
+          case "$BUMP" in
+            patch|minor|major) ;;
+            *)
+              echo "::error::Unsupported version bump: $BUMP"
+              exit 1
+              ;;
+          esac
+
+          npm version "$BUMP" --no-git-tag-version --ignore-scripts
+
+          if ! git diff --quiet -- . \
+            ':(exclude)package.json' \
+            ':(exclude)package-lock.json'; then
+            echo "::error::The version bump changed unexpected files"
+            git diff --name-only
+            exit 1
+          fi
+
+          VERSION="$(node -p "require('./package.json').version")"
+          node -e '
+            const pkg = require("./package.json")
+            const lock = require("./package-lock.json")
+            if (lock.version !== pkg.version || lock.packages[""].version !== pkg.version) {
+              throw new Error("package.json and package-lock.json versions do not match")
+            }
+          '
+
+          TAG="v$VERSION"
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            echo "::error::Release tag already exists: $TAG"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create the signed release commit and tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git add package.json package-lock.json
+          git commit -m "Release $VERSION"
+          git tag -m "Release $VERSION" "$TAG"
+
+      - name: Push the commit and tag atomically
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git push --atomic origin \
+            "HEAD:refs/heads/$DEFAULT_BRANCH" \
+            "refs/tags/$TAG"
+
+  dispatch:
+    name: Start tag-bound publishing
+    runs-on: ubuntu-24.04
+    needs: release
+    permissions:
+      actions: write # Dispatch publish.yaml at the newly created tag.
+    steps:
+      - name: Start the tag-bound publishing workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: gh workflow run publish.yaml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
