@@ -27,13 +27,6 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "devEngines": {
-    "packageManager": {
-      "name": "npm",
-      "version": ">=11.10.0",
-      "onFail": "error"
-    }
-  },
   "scripts": {
     "install": "node-gyp-build",
     "compile": "tsc -p ./",
@@ -41,7 +34,8 @@
     "build:native": "tsx scripts/build-native.ts",
     "test:unit": "tsx node_modules/mocha/bin/mocha.js test/**/*.test.ts",
     "test": "npm run build:native && npm run compile && npm run test:unit",
-    "update": "npm-check-updates --upgrade",
+    "check:npm-version": "node scripts/check-npm-version.mjs",
+    "update": "npm run check:npm-version && npm-check-updates --upgrade",
     "preflight": "npm run update && npm install && npm run compile && npm run build:native && npm test"
   },
   "dependencies": {
