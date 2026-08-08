@@ -8,9 +8,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- Hardened releases with signed tag-bound builds, exact native-package
-  verification, npm staged publishing, and maintainer 2FA approval.
-- Added 14-day dependency and GitHub Action cooldown policies.
+- Added signed, verified npm staged releases with maintainer 2FA approval.
+- Documented stage-only Trusted Publishing and enforced npm 11.15+.
+- Added 14-day dependency and GitHub Action cooldowns.
+- Added cooldown-aware dependency updates and preflight checks.
+- Refreshed development dependencies.
 
 ## [1.1.0] - 2026-02-25
 

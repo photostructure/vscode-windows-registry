@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "node16",
+    "moduleResolution": "node16",
     "target": "es6",
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
@@ -9,6 +9,7 @@
     "strict": true,
     "sourceMap": true,
     "outDir": "./dist",
+    "rootDir": "./lib",
     "declaration": true,
     "types": ["node", "mocha"],
     "typeRoots": ["./node_modules/@types"]

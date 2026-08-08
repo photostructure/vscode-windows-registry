@@ -28,8 +28,9 @@ matches the case-sensitive workflow filename exactly.
 ## Prepare the release
 
 1. Add the release notes to `CHANGELOG.md` on `main`.
-2. Push the completed changes and wait for the ordinary `main` build to pass.
-3. Confirm that `main` has not moved to a different commit.
+2. Run `npm run preflight` and review the dependency updates.
+3. Push the completed changes and wait for the ordinary `main` build to pass.
+4. Confirm that `main` has not moved to a different commit.
 
 ## Stage the package
 

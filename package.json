@@ -38,19 +38,21 @@
     "install": "node-gyp-build",
     "compile": "tsc -p ./",
     "build:native": "tsx scripts/build-native.ts",
-    "test": "npm run build:native && npm run compile && mocha -r ts-node/register test/**/*.test.ts"
+    "test": "npm run build:native && npm run compile && tsx node_modules/mocha/bin/mocha.js test/**/*.test.ts",
+    "update": "npm-check-updates --upgrade",
+    "preflight": "npm run update && npm install && npm run compile && npm run build:native && npm test"
   },
   "dependencies": {
     "node-gyp-build": "^4.8.4"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^25.3.0",
-    "mocha": "^11.7.5",
-    "node-gyp": "^12.2.0",
+    "@types/node": "26.1.1",
+    "mocha": "11.7.6",
+    "node-gyp": "12.4.0",
+    "npm-check-updates": "^22.2.9",
     "prebuildify": "^6.0.1",
-    "ts-node": "^10.9.2",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "tsx": "4.23.1",
+    "typescript": "7.0.2"
   }
 }

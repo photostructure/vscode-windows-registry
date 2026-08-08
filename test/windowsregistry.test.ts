@@ -4,14 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { GetStringRegKey, GetDWORDRegKey } from '../dist/index';
-import * as assert from 'assert';
+import * as assert from 'node:assert';
 
 describe('Windows Registry Tests', () => {
 	if (process.platform === 'win32') {
 		describe('@GetStringRegKey', () => {
 			it('Retrieves the ProgramFilesPath registry value', () => {
 				const prgmFilesPath = GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'ProgramFilesPath');
-				assert(prgmFilesPath === '%ProgramFiles%');
+				assert.ok(prgmFilesPath === '%ProgramFiles%');
 			});
 
 			it('Validates argument count', () => {
@@ -44,18 +44,18 @@ describe('Windows Registry Tests', () => {
 
 			it('Returns undefined for non-existent value', () => {
 				const result = GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'NonExistentStringValue12345');
-				assert(result === undefined);
+				assert.ok(result === undefined);
 			});
 		});
 		describe('@GetDWORDRegKey', () => {
 			it('Retrieves a DWORD registry value', () => {
 				const result = GetDWORDRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion', 'InstallDate');
-				assert(result === undefined || typeof result === 'number');
+				assert.ok(result === undefined || typeof result === 'number');
 			});
 
 			it('Returns undefined for non-existent value', () => {
 				const result = GetDWORDRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'NonExistentDWORDValue12345');
-				assert(result === undefined);
+				assert.ok(result === undefined);
 			});
 
 			it('Validates argument count', () => {
