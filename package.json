@@ -37,8 +37,10 @@
   "scripts": {
     "install": "node-gyp-build",
     "compile": "tsc -p ./",
+    "typecheck": "tsc --noEmit",
     "build:native": "tsx scripts/build-native.ts",
-    "test": "npm run build:native && npm run compile && tsx node_modules/mocha/bin/mocha.js test/**/*.test.ts",
+    "test:unit": "tsx node_modules/mocha/bin/mocha.js test/**/*.test.ts",
+    "test": "npm run build:native && npm run compile && npm run test:unit",
     "update": "npm-check-updates --upgrade",
     "preflight": "npm run update && npm install && npm run compile && npm run build:native && npm test"
   },

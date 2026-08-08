@@ -13,6 +13,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added 14-day dependency and GitHub Action cooldowns.
 - Added cooldown-aware dependency updates and preflight checks.
 - Refreshed development dependencies.
+- Fixed CI tests after the TypeScript loader migration.
 
 ## [1.1.0] - 2026-02-25
 
