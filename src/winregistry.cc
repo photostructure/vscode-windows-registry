@@ -1,292 +1,354 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for
- *license information.
+ *  license information.
  *--------------------------------------------------------------------------------------------*/
 
-#define WIN32_LEAN_AND_MEAN
-#include <string>
 #include <windows.h>
+
+#include <array>
+#include <cstddef>
+#include <exception>
+#include <memory>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
 
 #include <node_api.h>
 
 namespace {
 
+constexpr size_t kArgumentCount = 3;
+constexpr size_t kMaximumArgumentBytes = 16383;
+
+bool CheckNapiStatus(napi_env env, napi_status status) noexcept {
+  if (status == napi_ok) {
+    return true;
+  }
+
+  bool exceptionPending = false;
+  if (napi_is_exception_pending(env, &exceptionPending) == napi_ok &&
+      exceptionPending) {
+    return false;
+  }
+
+  napi_throw_error(env, nullptr, "NAPI call failed");
+  return false;
+}
+
 #define NAPI_CALL(env, call)                                                   \
   do {                                                                         \
-    napi_status status = (call);                                               \
-    if (status != napi_ok) {                                                   \
-      napi_throw_error((env), nullptr, "NAPI call failed");                    \
+    if (!CheckNapiStatus((env), (call))) {                                     \
       return nullptr;                                                          \
     }                                                                          \
-  } while (0)
+  } while (false)
 
-// Convert a UTF-8 std::string to a UTF-16 std::wstring.
+template <typename Callback>
+napi_value InvokeSafely(napi_env env, Callback callback) noexcept {
+  try {
+    return callback();
+  } catch (const std::bad_alloc &) {
+    napi_throw_error(env, nullptr, "Native allocation failed");
+  } catch (const std::exception &error) {
+    napi_throw_error(env, nullptr, error.what());
+  } catch (...) {
+    napi_throw_error(env, nullptr, "Unexpected native exception");
+  }
+  return nullptr;
+}
+
 std::wstring Utf8ToWide(const std::string &utf8) {
   if (utf8.empty()) {
-    return std::wstring();
+    return {};
   }
-  int len = MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
-                                static_cast<int>(utf8.size()), nullptr, 0);
-  if (len <= 0) {
-    return std::wstring();
+
+  const int inputLength = static_cast<int>(utf8.size());
+  const int outputLength = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), inputLength, nullptr, 0);
+  if (outputLength <= 0) {
+    throw std::runtime_error("Registry argument is not valid UTF-8");
   }
-  std::wstring wide(len, L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()),
-                      &wide[0], len);
+
+  std::wstring wide(static_cast<size_t>(outputLength), L'\0');
+  const int converted =
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(),
+                          inputLength, wide.data(), outputLength);
+  if (converted != outputLength) {
+    throw std::runtime_error("Failed to convert registry argument to UTF-16");
+  }
   return wide;
 }
 
-// Convert a UTF-16 buffer (with known length in bytes) to a UTF-8 std::string.
 std::string WideToUtf8(const wchar_t *wide, size_t wcharCount) {
   if (wcharCount == 0) {
-    return std::string();
+    return {};
   }
-  int len = WideCharToMultiByte(CP_UTF8, 0, wide, static_cast<int>(wcharCount),
-                                nullptr, 0, nullptr, nullptr);
-  if (len <= 0) {
-    return std::string();
+
+  const int inputLength = static_cast<int>(wcharCount);
+  const int outputLength =
+      WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, inputLength,
+                          nullptr, 0, nullptr, nullptr);
+  if (outputLength <= 0) {
+    throw std::runtime_error("Registry value is not valid UTF-16");
   }
-  std::string utf8(len, '\0');
-  WideCharToMultiByte(CP_UTF8, 0, wide, static_cast<int>(wcharCount),
-                      &utf8[0], len, nullptr, nullptr);
+
+  std::string utf8(static_cast<size_t>(outputLength), '\0');
+  const int converted = WideCharToMultiByte(
+      CP_UTF8, WC_ERR_INVALID_CHARS, wide, inputLength, utf8.data(),
+      outputLength, nullptr, nullptr);
+  if (converted != outputLength) {
+    throw std::runtime_error("Failed to convert registry value to UTF-8");
+  }
   return utf8;
 }
 
-HKEY GetHive(const std::string &hkey) {
+HKEY GetHive(const std::string &hkey) noexcept {
   if (hkey == "HKEY_CURRENT_USER") {
     return HKEY_CURRENT_USER;
   }
-
   if (hkey == "HKEY_LOCAL_MACHINE") {
     return HKEY_LOCAL_MACHINE;
   }
-
   if (hkey == "HKEY_CLASSES_ROOT") {
     return HKEY_CLASSES_ROOT;
   }
-
   if (hkey == "HKEY_USERS") {
     return HKEY_USERS;
   }
-
   if (hkey == "HKEY_CURRENT_CONFIG") {
     return HKEY_CURRENT_CONFIG;
   }
-
-  return NULL;
+  return nullptr;
 }
 
-napi_value GetStringRegKey(napi_env env, napi_callback_info info) {
-  napi_value argv[3];
-  size_t argc = 3;
-
-  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr));
-
-  // Check that we have 3 arguments - Hive, Path, Name
-  if (argc < 3) {
-    napi_throw_error(env, "EINVAL", "Wrong number of arguments");
-    return nullptr;
+bool GetUtf8Argument(napi_env env, napi_value value, std::string &output) {
+  napi_valuetype valueType;
+  if (!CheckNapiStatus(env, napi_typeof(env, value, &valueType))) {
+    return false;
+  }
+  if (valueType != napi_string) {
+    napi_throw_type_error(env, "EINVAL", "Expected string");
+    return false;
   }
 
-  // Retrieve the 3 arguments
-  for (int i = 0; i < 3; i++) {
-    napi_valuetype value_type;
-    NAPI_CALL(env, napi_typeof(env, argv[i], &value_type));
-    if (value_type != napi_string) {
-      napi_throw_error(env, "EINVAL", "Expected string");
-      return nullptr;
+  size_t length = 0;
+  if (!CheckNapiStatus(
+          env, napi_get_value_string_utf8(env, value, nullptr, 0, &length))) {
+    return false;
+  }
+  if (length >= kMaximumArgumentBytes) {
+    napi_throw_range_error(env, "EINVAL", "Arguments too long");
+    return false;
+  }
+
+  output.assign(length + 1, '\0');
+  size_t copied = 0;
+  if (!CheckNapiStatus(env, napi_get_value_string_utf8(
+                                env, value, output.data(), output.size(),
+                                &copied))) {
+    return false;
+  }
+  output.resize(copied);
+
+  if (copied != length) {
+    napi_throw_error(env, nullptr, "Registry argument changed while reading");
+    return false;
+  }
+  if (output.find('\0') != std::string::npos) {
+    napi_throw_type_error(env, "EINVAL",
+                          "Registry arguments cannot contain null characters");
+    return false;
+  }
+  return true;
+}
+
+struct RegistryRequest {
+  HKEY hive = nullptr;
+  std::wstring path;
+  std::wstring name;
+};
+
+bool GetRegistryRequest(napi_env env, napi_callback_info info,
+                        RegistryRequest &request) {
+  std::array<napi_value, kArgumentCount> argv{};
+  size_t argc = argv.size();
+  if (!CheckNapiStatus(
+          env, napi_get_cb_info(env, info, &argc, argv.data(), nullptr, nullptr))) {
+    return false;
+  }
+  if (argc < argv.size()) {
+    napi_throw_type_error(env, "EINVAL", "Wrong number of arguments");
+    return false;
+  }
+
+  std::string hive;
+  std::string path;
+  std::string name;
+  if (!GetUtf8Argument(env, argv[0], hive) ||
+      !GetUtf8Argument(env, argv[1], path) ||
+      !GetUtf8Argument(env, argv[2], name)) {
+    return false;
+  }
+
+  request.hive = GetHive(hive);
+  if (request.hive == nullptr) {
+    napi_throw_type_error(env, "EINVAL", "Unknown registry hive");
+    return false;
+  }
+  request.path = Utf8ToWide(path);
+  request.name = Utf8ToWide(name);
+  return true;
+}
+
+struct RegistryKeyCloser {
+  void operator()(HKEY key) const noexcept {
+    if (key != nullptr) {
+      static_cast<void>(RegCloseKey(key));
     }
   }
+};
 
-  size_t str_len = 0;
-  const int MAX_LEN = 16383;
+using RegistryKey =
+    std::unique_ptr<std::remove_pointer_t<HKEY>, RegistryKeyCloser>;
 
-  NAPI_CALL(env,
-            napi_get_value_string_utf8(env, argv[0], nullptr, 0, &str_len));
-  if (str_len + 1 > MAX_LEN) {
-    napi_throw_error(env, "EINVAL", "Arguments too long");
-    return nullptr;
-  }
-  std::string hive_arg(str_len, '\0');
-  NAPI_CALL(env, napi_get_value_string_utf8(env, argv[0], &hive_arg[0],
-                                            str_len + 1, nullptr));
-  HKEY hive = GetHive(hive_arg);
-
-  NAPI_CALL(env,
-            napi_get_value_string_utf8(env, argv[1], nullptr, 0, &str_len));
-  if (str_len + 1 > MAX_LEN) {
-    napi_throw_error(env, "EINVAL", "Arguments too long");
-    return nullptr;
-  }
-  std::string path(str_len, '\0');
-  NAPI_CALL(env, napi_get_value_string_utf8(env, argv[1], &path[0],
-                                            str_len + 1, nullptr));
-
-  NAPI_CALL(env,
-            napi_get_value_string_utf8(env, argv[2], nullptr, 0, &str_len));
-  if (str_len + 1 > MAX_LEN) {
-    napi_throw_error(env, "EINVAL", "Arguments too long");
-    return nullptr;
-  }
-  std::string name(str_len, '\0');
-  NAPI_CALL(env, napi_get_value_string_utf8(env, argv[2], &name[0],
-                                            str_len + 1, nullptr));
-
-  if (hive == NULL) {
-    napi_throw_error(env, nullptr, "Unable to open registry hive");
-    return nullptr;
-  }
-
-  std::wstring widePath = Utf8ToWide(path);
-  std::wstring wideName = Utf8ToWide(name);
-
-  HKEY hKey;
-  if (ERROR_SUCCESS !=
-      RegOpenKeyExW(hive, widePath.c_str(), 0, KEY_READ, &hKey)) {
+RegistryKey OpenRegistryKey(napi_env env, const RegistryRequest &request) {
+  HKEY key = nullptr;
+  if (RegOpenKeyExW(request.hive, request.path.c_str(), 0, KEY_READ, &key) !=
+      ERROR_SUCCESS) {
     napi_throw_error(env, nullptr, "Unable to open registry key");
-    return nullptr;
+    return {};
   }
-
-  wchar_t szBuffer[512];
-  DWORD dwBufferSize = sizeof(szBuffer);
-  DWORD dwType = 0;
-  LONG rc = RegQueryValueExW(hKey, wideName.c_str(), 0, &dwType,
-                             reinterpret_cast<LPBYTE>(szBuffer), &dwBufferSize);
-  RegCloseKey(hKey);
-
-  if (rc == ERROR_MORE_DATA) {
-    napi_throw_error(env, nullptr, "Registry value too large");
-    return nullptr;
-  }
-
-  if (rc != ERROR_SUCCESS) {
-    return nullptr;
-  }
-
-  if (dwType != REG_SZ && dwType != REG_EXPAND_SZ) {
-    return nullptr;
-  }
-
-  // dwBufferSize is in bytes; compute wchar count, excluding null terminator
-  size_t wcharCount = dwBufferSize / sizeof(wchar_t);
-  if (wcharCount > 0 && szBuffer[wcharCount - 1] == L'\0') {
-    wcharCount--;
-  }
-
-  std::string utf8Result = WideToUtf8(szBuffer, wcharCount);
-
-  napi_value napi_result;
-  NAPI_CALL(env, napi_create_string_utf8(env, utf8Result.c_str(),
-                                         utf8Result.length(), &napi_result));
-
-  return napi_result;
+  return RegistryKey(key);
 }
 
-napi_value GetDWORDRegKey(napi_env env, napi_callback_info info) {
-  napi_value argv[3];
-  size_t argc = 3;
-
-  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr));
-
-  // Check that we have 3 arguments - Hive, Path, Name
-  if (argc < 3) {
-    napi_throw_error(env, "EINVAL", "Wrong number of arguments");
+napi_value GetStringRegKeyImpl(napi_env env, napi_callback_info info) {
+  RegistryRequest request;
+  if (!GetRegistryRequest(env, info, request)) {
     return nullptr;
   }
 
-  // Retrieve the 3 arguments
-  for (int i = 0; i < 3; i++) {
-    napi_valuetype value_type;
-    NAPI_CALL(env, napi_typeof(env, argv[i], &value_type));
-    if (value_type != napi_string) {
-      napi_throw_error(env, "EINVAL", "Expected string");
-      return nullptr;
-    }
-  }
-
-  size_t str_len = 0;
-  const int MAX_LEN = 16383;
-
-  NAPI_CALL(env,
-            napi_get_value_string_utf8(env, argv[0], nullptr, 0, &str_len));
-  if (str_len + 1 > MAX_LEN) {
-    napi_throw_error(env, "EINVAL", "Arguments too long");
-    return nullptr;
-  }
-  std::string hive_arg(str_len, '\0');
-  NAPI_CALL(env, napi_get_value_string_utf8(env, argv[0], &hive_arg[0],
-                                            str_len + 1, nullptr));
-  HKEY hive = GetHive(hive_arg);
-
-  NAPI_CALL(env,
-            napi_get_value_string_utf8(env, argv[1], nullptr, 0, &str_len));
-  if (str_len + 1 > MAX_LEN) {
-    napi_throw_error(env, "EINVAL", "Arguments too long");
-    return nullptr;
-  }
-  std::string path(str_len, '\0');
-  NAPI_CALL(env, napi_get_value_string_utf8(env, argv[1], &path[0],
-                                            str_len + 1, nullptr));
-
-  NAPI_CALL(env,
-            napi_get_value_string_utf8(env, argv[2], nullptr, 0, &str_len));
-  if (str_len + 1 > MAX_LEN) {
-    napi_throw_error(env, "EINVAL", "Arguments too long");
-    return nullptr;
-  }
-  std::string name(str_len, '\0');
-  NAPI_CALL(env, napi_get_value_string_utf8(env, argv[2], &name[0],
-                                            str_len + 1, nullptr));
-
-  if (hive == NULL) {
-    napi_throw_error(env, nullptr, "Unable to open registry hive");
+  RegistryKey key = OpenRegistryKey(env, request);
+  if (!key) {
     return nullptr;
   }
 
-  std::wstring widePath = Utf8ToWide(path);
-  std::wstring wideName = Utf8ToWide(name);
+  std::array<wchar_t, 512> buffer{};
+  DWORD bufferSize = static_cast<DWORD>(buffer.size() * sizeof(buffer[0]));
+  DWORD type = 0;
+  const LONG result = RegQueryValueExW(
+      key.get(), request.name.c_str(), nullptr, &type,
+      reinterpret_cast<LPBYTE>(buffer.data()), &bufferSize);
 
-  HKEY hKey;
-  if (ERROR_SUCCESS !=
-      RegOpenKeyExW(hive, widePath.c_str(), 0, KEY_READ, &hKey)) {
-    napi_throw_error(env, nullptr, "Unable to open registry key");
+  if (result == ERROR_MORE_DATA) {
+    napi_throw_range_error(env, nullptr, "Registry value too large");
+    return nullptr;
+  }
+  if (result != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) {
+    return nullptr;
+  }
+  if (bufferSize > buffer.size() * sizeof(buffer[0]) ||
+      bufferSize % sizeof(buffer[0]) != 0) {
+    napi_throw_error(env, nullptr, "Registry returned an invalid string size");
     return nullptr;
   }
 
-  DWORD dwValue = 0;
-  DWORD dwBufferSize = sizeof(dwValue);
-  DWORD dwType = 0;
-  LONG result = RegQueryValueExW(hKey, wideName.c_str(), 0, &dwType,
-                                 reinterpret_cast<LPBYTE>(&dwValue),
-                                 &dwBufferSize);
-  RegCloseKey(hKey);
-
-  if (result != ERROR_SUCCESS || dwType != REG_DWORD) {
-    return nullptr;
+  size_t wcharCount = bufferSize / sizeof(buffer[0]);
+  if (wcharCount > 0 && buffer[wcharCount - 1] == L'\0') {
+    wcharCount -= 1;
   }
 
-  napi_value napi_result;
-  NAPI_CALL(env, napi_create_uint32(env, dwValue, &napi_result));
-
-  return napi_result;
+  const std::string utf8Result = WideToUtf8(buffer.data(), wcharCount);
+  napi_value napiResult;
+  NAPI_CALL(env, napi_create_string_utf8(env, utf8Result.data(),
+                                         utf8Result.size(), &napiResult));
+  return napiResult;
 }
+
+napi_value GetStringRegKey(napi_env env, napi_callback_info info) noexcept {
+  return InvokeSafely(env, [env, info]() { return GetStringRegKeyImpl(env, info); });
+}
+
+napi_value GetDWORDRegKeyImpl(napi_env env, napi_callback_info info) {
+  RegistryRequest request;
+  if (!GetRegistryRequest(env, info, request)) {
+    return nullptr;
+  }
+
+  RegistryKey key = OpenRegistryKey(env, request);
+  if (!key) {
+    return nullptr;
+  }
+
+  DWORD value = 0;
+  DWORD bufferSize = sizeof(value);
+  DWORD type = 0;
+  const LONG result = RegQueryValueExW(
+      key.get(), request.name.c_str(), nullptr, &type,
+      reinterpret_cast<LPBYTE>(&value), &bufferSize);
+  if (result != ERROR_SUCCESS || type != REG_DWORD ||
+      bufferSize != sizeof(value)) {
+    return nullptr;
+  }
+
+  napi_value napiResult;
+  NAPI_CALL(env, napi_create_uint32(env, value, &napiResult));
+  return napiResult;
+}
+
+napi_value GetDWORDRegKey(napi_env env, napi_callback_info info) noexcept {
+  return InvokeSafely(env, [env, info]() { return GetDWORDRegKeyImpl(env, info); });
+}
+
+#ifdef NATIVE_SANITIZE
+napi_value TriggerAsanCanary(napi_env env, napi_callback_info info) noexcept {
+  napi_value argument;
+  size_t argc = 1;
+  NAPI_CALL(env,
+            napi_get_cb_info(env, info, &argc, &argument, nullptr, nullptr));
+  if (argc != 1) {
+    napi_throw_type_error(env, "EINVAL", "ASan canary requires an index");
+    return nullptr;
+  }
+
+  uint32_t index = 0;
+  NAPI_CALL(env, napi_get_value_uint32(env, argument, &index));
+  auto allocation = std::make_unique<unsigned char[]>(1);
+  allocation[index] = 0x5a; // Intentionally trips ASan when the test passes 1.
+
+  napi_value result;
+  NAPI_CALL(env, napi_get_undefined(env, &result));
+  return result;
+}
+#endif
 
 napi_value Init(napi_env env, napi_value exports) {
   napi_value getStringRegKey;
   NAPI_CALL(env, napi_create_function(env, "GetStringRegKey", NAPI_AUTO_LENGTH,
-                                      GetStringRegKey, NULL, &getStringRegKey));
+                                      GetStringRegKey, nullptr,
+                                      &getStringRegKey));
   NAPI_CALL(env, napi_set_named_property(env, exports, "GetStringRegKey",
                                          getStringRegKey));
 
   napi_value getDWORDRegKey;
   NAPI_CALL(env, napi_create_function(env, "GetDWORDRegKey", NAPI_AUTO_LENGTH,
-                                      GetDWORDRegKey, NULL, &getDWORDRegKey));
+                                      GetDWORDRegKey, nullptr,
+                                      &getDWORDRegKey));
   NAPI_CALL(env, napi_set_named_property(env, exports, "GetDWORDRegKey",
                                          getDWORDRegKey));
 
+#ifdef NATIVE_SANITIZE
+  napi_value triggerAsanCanary;
+  NAPI_CALL(env,
+            napi_create_function(env, "__triggerAsanCanary", NAPI_AUTO_LENGTH,
+                                 TriggerAsanCanary, nullptr,
+                                 &triggerAsanCanary));
+  NAPI_CALL(env, napi_set_named_property(env, exports, "__triggerAsanCanary",
+                                         triggerAsanCanary));
+#endif
   return exports;
 }
 
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init);
+
 } // namespace

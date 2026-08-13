@@ -6,9 +6,49 @@
 import { GetStringRegKey, GetDWORDRegKey } from '../dist/index';
 import * as assert from 'node:assert';
 import { describe, it } from 'node:test';
+import { Worker } from 'node:worker_threads';
 
 describe('Windows Registry Tests', () => {
 	if (process.platform === 'win32') {
+		it('Loads independently in a worker environment', async () => {
+			const modulePath = require.resolve('../dist/index');
+			const result = await new Promise<{ loaded: boolean; valueType: string }>((resolve, reject) => {
+				const worker = new Worker(`
+					const { parentPort, workerData } = require('node:worker_threads');
+					const registry = require(workerData.modulePath);
+					const value = registry.GetDWORDRegKey(
+						'HKEY_LOCAL_MACHINE',
+						'SOFTWARE\\\\Microsoft\\\\Windows NT\\\\CurrentVersion',
+						'InstallDate'
+					);
+					parentPort.postMessage({
+						loaded: typeof registry.GetStringRegKey === 'function',
+						valueType: typeof value,
+					});
+				`, { eval: true, workerData: { modulePath } });
+				worker.once('message', resolve);
+				worker.once('error', reject);
+			});
+
+			assert.strictEqual(result.loaded, true);
+			assert.ok(result.valueType === 'number' || result.valueType === 'undefined');
+		});
+
+		it('Rejects invalid argument types, hives, and embedded nulls', () => {
+			assert.throws(() => (GetStringRegKey as any)(42, 'path', 'name'), /Expected string/);
+			assert.throws(() => (GetDWORDRegKey as any)('HKEY_UNKNOWN', 'path', 'name'), /Unknown registry hive/);
+			assert.throws(() => GetStringRegKey(
+				'HKEY_CURRENT_USER',
+				'Software\0ignored',
+				'name',
+			), /cannot contain null characters/);
+			assert.throws(() => GetDWORDRegKey(
+				'HKEY_CURRENT_USER',
+				'Software',
+				'name\0ignored',
+			), /cannot contain null characters/);
+		});
+
 		describe('@GetStringRegKey', () => {
 			it('Retrieves the ProgramFilesPath registry value', () => {
 				const prgmFilesPath = GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion', 'ProgramFilesPath');

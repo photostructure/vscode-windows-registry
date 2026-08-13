@@ -15,6 +15,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Refreshed development dependencies, including node-gyp 13.
 - Fixed CI tests after the TypeScript loader migration.
 - Limited CI to supported Node.js release lines.
+- Hardened the native ABI boundary and registry handle ownership.
+- Added gated MSVC analysis, AddressSanitizer, and PE mitigation checks.
 - Made native builds deterministic and removed prebuildify.
 - Replaced Mocha with Node.js's built-in test runner.
 

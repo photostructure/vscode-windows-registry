@@ -35,6 +35,7 @@
     "build:native": "tsx scripts/build-native.ts",
     "analyze:native": "tsx scripts/build-native.ts --analyze",
     "sanitize:native": "tsx scripts/build-native.ts --sanitize",
+    "test:sanitize": "tsx scripts/test-native-sanitized.ts",
     "verify:native": "tsx scripts/verify-native-hardening.ts",
     "test:unit": "tsx --test \"test/**/*.test.ts\"",
     "test": "npm run build:native && npm run verify:native && npm run compile && npm run test:unit",
