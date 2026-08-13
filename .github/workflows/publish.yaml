@@ -104,6 +104,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Build the native addon
         run: npm run build:native
+      - name: Verify native binary hardening
+        run: npm run verify:native
       - name: Record and verify the native artifact
         shell: pwsh
         env:

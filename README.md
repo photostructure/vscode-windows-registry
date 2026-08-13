@@ -33,12 +33,16 @@ console.log(GetStringRegKey('HKEY_LOCAL_MACHINE', 'SOFTWARE\\Microsoft\\Windows\
 
 ## Development
 
-Dependency resolution requires npm 11.10 or later.
+Development requires npm 11.10 or later and a Node.js version accepted by
+node-gyp 13: `^22.22.2 || ^24.15.0 || >=26.0.0`. CI builds on Node 24.19.0.
 
 ```sh
 npm ci                 # install the committed dependency versions
-npm run build:native  # builds the prebuilt binary
-npm test              # builds if necessary, then runs tests
+npm run build:native   # rebuild the prebuilt binary
+npm run analyze:native # rebuild with gated MSVC static analysis
+npm run sanitize:native # rebuild win32-x64 with AddressSanitizer
+npm run test:sanitize  # prove ASan catches a defect, then run the tests under ASan
+npm test               # build, verify hardening, compile, and test
 ```
 
 ## License

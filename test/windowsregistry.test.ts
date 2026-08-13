@@ -5,6 +5,7 @@
 
 import { GetStringRegKey, GetDWORDRegKey } from '../dist/index';
 import * as assert from 'node:assert';
+import { describe, it } from 'node:test';
 
 describe('Windows Registry Tests', () => {
 	if (process.platform === 'win32') {
