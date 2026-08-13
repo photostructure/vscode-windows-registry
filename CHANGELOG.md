@@ -4,7 +4,29 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [2.0.0] - 2026-08-12
+
+### Changed
+
+- Hardened the native ABI boundary and registry handle ownership. Invalid
+  UTF-8 or UTF-16 and arguments containing a null character now throw, where
+  they previously truncated the argument and read a different registry key.
+  An unknown hive name still throws, now reporting `Unknown registry hive`
+  rather than `Unable to open registry hive`.
+- Added gated MSVC analysis, AddressSanitizer, and PE mitigation checks.
+- Made native builds deterministic and removed prebuildify.
+- Replaced Mocha with Node.js's built-in test runner.
+- Adopted node-gyp 13. Building from source now requires Node
+  `^22.22.2 || ^24.15.0 || >=26.0.0`.
+
+### Node.js support
+
+Node 20 reached end-of-life on 2026-04-30 and was removed from the CI matrix
+in 1.2.0. Prebuilt binaries target N-API 8 and still load on Node 20, but that
+combination is no longer tested, and building from source requires Node 22.22
+or later.
+
+## [1.2.0] - 2026-08-09
 
 ### Changed
 
@@ -12,13 +34,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Documented stage-only Trusted Publishing and enforced npm 11.15+.
 - Added 14-day dependency and GitHub Action cooldowns.
 - Added cooldown-aware dependency updates and preflight checks.
-- Refreshed development dependencies, including node-gyp 13.
+- Refreshed development dependencies.
 - Fixed CI tests after the TypeScript loader migration.
-- Limited CI to supported Node.js release lines.
-- Hardened the native ABI boundary and registry handle ownership.
-- Added gated MSVC analysis, AddressSanitizer, and PE mitigation checks.
-- Made native builds deterministic and removed prebuildify.
-- Replaced Mocha with Node.js's built-in test runner.
+- Limited CI to Node 22, 24, and 26; Node 20 is no longer tested.
 
 ## [1.1.0] - 2026-02-25
 
