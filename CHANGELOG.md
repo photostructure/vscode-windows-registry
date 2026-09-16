@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-09-15
+
+### Fixed
+
+- The `install` script no longer runs `node-gyp-build` on non-Windows
+  platforms. `lib/index.ts` loads the native binding only when
+  `process.platform === "win32"`, so building it anywhere else compiled an
+  addon that nothing would load, and failed outright wherever `node-gyp` was
+  not on `PATH`. That went unnoticed because pnpm 11 exposed its own bundled
+  `node-gyp` to lifecycle scripts; pnpm 12 stopped, turning a pointless build
+  into `ERR_PNPM_EXECUTOR_LIFECYCLE_SCRIPT_FAILED`. Windows is unchanged:
+  `node-gyp-build` still resolves the shipped `win32-x64` and `win32-arm64`
+  prebuilds, and still builds from source on any other arch.
+
 ## [2.0.0] - 2026-08-12
 
 ### Changed

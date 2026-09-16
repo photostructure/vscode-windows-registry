@@ -16,6 +16,7 @@
   "homepage": "https://github.com/photostructure/vscode-windows-registry#readme",
   "files": [
     "binding.gyp",
+    "install.cjs",
     "dist/",
     "prebuilds/",
     "src/",
@@ -28,7 +29,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "install": "node-gyp-build",
+    "install": "node install.cjs",
     "clean:dist": "tsx scripts/clean-dist.ts",
     "compile": "npm run clean:dist && tsc -p ./",
     "typecheck": "tsc -p tsconfig.check.json",
