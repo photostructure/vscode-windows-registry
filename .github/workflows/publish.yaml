@@ -273,6 +273,7 @@ jobs:
           dist/index.d.ts
           dist/index.js
           dist/index.js.map
+          install.cjs
           package.json
           prebuilds/win32-arm64/@photostructure+windows-registry.glibc.node
           prebuilds/win32-x64/@photostructure+windows-registry.glibc.node

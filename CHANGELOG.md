@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.1] - 2026-09-15
+## [2.0.2] - 2026-09-15
 
 ### Fixed
 
@@ -17,6 +17,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   into `ERR_PNPM_EXECUTOR_LIFECYCLE_SCRIPT_FAILED`. Windows is unchanged:
   `node-gyp-build` still resolves the shipped `win32-x64` and `win32-arm64`
   prebuilds, and still builds from source on any other arch.
+
+`v2.0.1` was tagged for this fix but never published: adding `install.cjs`
+changed the package file list, and the release workflow's package boundary
+check rejected the tarball. The tag remains, unpublished.
 
 ## [2.0.0] - 2026-08-12
 
